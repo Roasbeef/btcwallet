@@ -6,13 +6,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lightninglabs/neutrino"
 	"github.com/roasbeef/btcd/chaincfg/chainhash"
 	"github.com/roasbeef/btcd/wire"
 	"github.com/roasbeef/btcrpcclient"
 	"github.com/roasbeef/btcutil"
 	"github.com/roasbeef/btcwallet/waddrmgr"
 	"github.com/roasbeef/btcwallet/wtxmgr"
-	"github.com/lightninglabs/neutrino"
 )
 
 // NeutrinoClient is an implementation of the btcwalet chain.Interface interface.
@@ -109,6 +109,12 @@ func (s *NeutrinoClient) GetBlockHeight(hash *chainhash.Hash) (int32, error) {
 
 // GetBestBlock replicates the RPC client's GetBestBlock command.
 func (s *NeutrinoClient) GetBestBlock() (*chainhash.Hash, int32, error) {
+	// Wait until current before returning. This prevents insane amounts
+	// of writes to the wtxmgr. Check again every second to prevent
+	// locking the mutex in ChainService too often.
+	for !s.CS.IsCurrent() {
+		time.Sleep(time.Second)
+	}
 	chainTip, err := s.CS.BestSnapshot()
 	if err != nil {
 		return nil, 0, err
@@ -151,6 +157,10 @@ func (s *NeutrinoClient) Rescan(startHash *chainhash.Hash, addrs []btcutil.Addre
 	if s.scanning {
 		// Restart the rescan by killing the existing rescan.
 		close(s.rescanQuit)
+		err := <-s.rescanErr
+		if err != nil {
+			log.Errorf("Rescan ended with error: %s", err)
+		}
 	}
 	s.rescanQuit = make(chan struct{})
 	s.scanning = true
@@ -401,11 +411,6 @@ out:
 					break out
 				}
 				dequeue = nil
-			}
-
-		case err := <-s.rescanErr:
-			if err != nil {
-				log.Errorf("Neutrino rescan ended with error: %s", err)
 			}
 
 		case s.currentBlock <- bs:

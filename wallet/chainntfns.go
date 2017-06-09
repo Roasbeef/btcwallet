@@ -53,20 +53,24 @@ func (w *Wallet) handleChainNotifications() {
 			})
 			notificationName = "recvtx/redeemingtx"
 		case chain.FilteredBlockConnected:
-			// Atomically update for the whole block.
+			// Ignore this for btcd-backed rescans and use the
+			// RelevantTx notifications instead
+			switch chainClient.(type) {
+			case *chain.RPCClient:
+				continue
+			}
+			// Atomically update transactions for the whole block.
 			err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
-				err := w.connectBlock(tx, *n.Block)
-				if err != nil {
-					return err
-				}
+				var err error
 				for _, rec := range n.RelevantTxs {
-					err := w.addRelevantTx(tx, rec, n.Block)
+					err = w.addRelevantTx(tx, rec, n.Block)
 					if err != nil {
 						return err
 					}
 				}
 				return nil
 			})
+			notificationName = "filteredblockconnected"
 
 		// The following are handled by the wallet's rescan
 		// goroutines, so just pass them there.
