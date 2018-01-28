@@ -46,10 +46,23 @@ const (
 	walletDbWatchingOnlyName = "wowallet.db"
 )
 
-// ErrNotSynced describes an error where an operation cannot complete
-// due wallet being out of sync (and perhaps currently syncing with)
-// the remote chain server.
-var ErrNotSynced = errors.New("wallet is not synchronized with the chain server")
+var (
+	// ErrNotSynced describes an error where an operation cannot complete
+	// due wallet being out of sync (and perhaps currently syncing with)
+	// the remote chain server.
+	ErrNotSynced = errors.New("wallet is not synchronized with the chain server")
+
+	// ErrReject[reason] is a concrete error type that will reflect the
+	// error code found in a reject message from a peer.
+	ErrRejectMalformed       = errors.New("Transaction rejected: malformed")
+	ErrRejectInvalid         = errors.New("Transaction rejected: invalid")
+	ErrRejectObsolete        = errors.New("Transaction rejected: obsolete")
+	ErrRejectDuplicate       = errors.New("Transaction rejected: duplicate")
+	ErrRejectNonstandard     = errors.New("Transaction rejected: non-standard")
+	ErrRejectDust            = errors.New("Transaction rejected: dust")
+	ErrRejectInsufficientFee = errors.New("Transaction rejected: insufficient fee")
+	ErrRejectCheckpoint      = errors.New("Transaction rejected: checkpoint")
+)
 
 // Namespace bucket keys.
 var (
@@ -2532,6 +2545,37 @@ func (w *Wallet) PublishTransaction(tx *wire.MsgTx) error {
 			return w.TxStore.InsertTx(txmgrNs, rec, nil)
 		})
 		if err != nil {
+			return err
+		}
+
+	case *chain.RPCClient:
+		_, err = server.SendRawTransaction(tx, false)
+		if err != nil {
+			switch e := err.(type) {
+			case rpcclient.SendRawTransactionRejectError:
+				switch e.RejectCode {
+				case wire.RejectMalformed:
+					return ErrRejectMalformed
+				case wire.RejectInvalid:
+					return ErrRejectInvalid
+				case wire.RejectObsolete:
+					return ErrRejectObsolete
+				case wire.RejectDuplicate:
+					return ErrRejectObsolete
+				case wire.RejectNonstandard:
+					return ErrRejectNonstandard
+				case wire.RejectDust:
+					return ErrRejectDust
+				case wire.RejectInsufficientFee:
+					return ErrRejectInsufficientFee
+				case wire.RejectCheckpoint:
+					return ErrRejectCheckpoint
+				default:
+					// Fallthrough.
+				}
+			default:
+				// Fallthrough.
+			}
 			return err
 		}
 	}
