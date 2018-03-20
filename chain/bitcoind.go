@@ -5,6 +5,7 @@ import (
 	"container/list"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -367,7 +368,10 @@ func (c *BitcoindClient) Start() error {
 		return errors.New("mismatched networks")
 	}
 
-	// Connect a ZMQ socket for block notifications
+	// Connect a ZMQ socket for block notifications. We return an error
+	// if it fails when initially connecting. When we get disconnected
+	// during normal operation, we assume we'll eventually be able to
+	// reconnect and so we keep trying until we do.
 	zmqClient, err := gozmq.Subscribe(c.zmqConnect, []string{"rawblock",
 		"rawtx"}, c.zmqPollInterval)
 	if err != nil {
@@ -531,7 +535,15 @@ func (c *BitcoindClient) onRescanFinished(hash *chainhash.Hash, height int32, bl
 // appropriate, and queues them as btcd or neutrino would.
 func (c *BitcoindClient) socketHandler(zmqClient *gozmq.Conn) {
 	defer c.wg.Done()
-	defer zmqClient.Close()
+	defer func() {
+		// If we've disconnected and attempted reconnects, zmqClient
+		// might be nil. In that case, prevent a panic on exit by not
+		// bothering to close it. Any non-nil instances have already
+		// been closed.
+		if zmqClient != nil {
+			zmqClient.Close()
+		}
+	}()
 
 	log.Infof("Started listening for blocks via ZMQ on %s", c.zmqConnect)
 	c.onClientConnect()
@@ -552,6 +564,8 @@ func (c *BitcoindClient) socketHandler(zmqClient *gozmq.Conn) {
 		Hash:      *bestHash,
 		Timestamp: time.Unix(bestHeader.Time, 0),
 	}
+
+	var msgBytes [][]byte
 
 mainLoop:
 	for {
@@ -628,8 +642,28 @@ mainLoop:
 			}
 		}
 
-		// Now, poll events from bitcoind.
-		msgBytes, err := zmqClient.Receive()
+		// Now, poll events from bitcoind. We try to receive if we
+		// have a ZMQ connection; otherwise, we try to connect.
+		if zmqClient != nil {
+			msgBytes, err = zmqClient.Receive()
+		} else {
+			// The last call to gozmq.Subscribe returned nil, or
+			// we just disconnected and the code in the below
+			// error handler set zmqClient to nil. We attempt to
+			// reconnect, ignoring any error. On fail, this call
+			// should return nil which will signal a retry the
+			// next time.
+			zmqClient, err = gozmq.Subscribe(c.zmqConnect,
+				[]string{"rawblock", "rawtx"},
+				c.zmqPollInterval)
+			if err == nil {
+				log.Infof("ZMQ connectivity to %s "+
+					"re-established", c.zmqConnect)
+			}
+			// Don't peg the CPU.
+			time.Sleep(c.zmqPollInterval)
+			continue mainLoop
+		}
 		if err != nil {
 			switch e := err.(type) {
 			case net.Error:
@@ -637,7 +671,23 @@ mainLoop:
 					log.Error(err)
 				}
 			default:
-				log.Error(err)
+				if e == io.EOF {
+					// We're disconnected. Close the
+					// existing connection.
+					if zmqClient != nil {
+						zmqClient.Close()
+						log.Warnf("ZMQ connection to %s terminated, "+
+							"attempting to re-establish", c.zmqConnect)
+					}
+					// We'll attempt to reconnect at the
+					// next loop. Signal by setting the
+					// zmqClient to nil, which is what will
+					// happen with every unsuccessful
+					// reconnect attempt.
+					zmqClient = nil
+				} else {
+					log.Error(err)
+				}
 			}
 			continue mainLoop
 		}
