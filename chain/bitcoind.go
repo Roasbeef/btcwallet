@@ -119,6 +119,11 @@ func (c *BitcoindClient) GetCurrentNet() (wire.BitcoinNet, error) {
 	}
 }
 
+// GetPeerInfo returns the info for all of the peers connected to bitcoind.
+func (c *BitcoindClient) GetPeerInfo() ([]btcjson.GetPeerInfoResult, error) {
+	return c.client.GetPeerInfo()
+}
+
 // GetBestBlock returns the highest block known to bitcoind.
 func (c *BitcoindClient) GetBestBlock() (*chainhash.Hash, int32, error) {
 	bcinfo, err := c.client.GetBlockChainInfo()
