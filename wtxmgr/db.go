@@ -310,18 +310,27 @@ func (it *blockIterator) prev() bool {
 	}
 
 	if it.ck == nil {
-		it.ck, it.cv = it.c.Seek(it.seek)
-		// Seek positions the cursor at the next k/v pair if one with
-		// this prefix was not found.  If this happened (the prefixes
-		// won't match in this case) move the cursor backward.
-		//
-		// This technically does not correct for multiple keys with
-		// matching prefixes by moving the cursor to the last matching
-		// key, but this doesn't need to be considered when dealing with
-		// block records since the key (and seek prefix) is just the
-		// block height.
-		if !bytes.HasPrefix(it.ck, it.seek) {
-			it.ck, it.cv = it.c.Prev()
+		seekCheck := make([]byte, 4)
+		byteOrder.PutUint32(seekCheck, ^uint32(0))
+		if bytes.Equal(it.seek, seekCheck) {
+			// First time prev is called on a reverse iterator, so
+			// start from the end
+			it.ck, it.cv = it.c.Last()
+		} else {
+			it.ck, it.cv = it.c.Seek(it.seek)
+			// Seek positions the cursor at the next k/v pair if one
+			// with this prefix was not found.  If this happened
+			// (the prefixes won't match in this case) move the
+			// cursor backward.
+			//
+			// This technically does not correct for multiple keys
+			// with matching prefixes by moving the cursor to the
+			// last matching key, but this doesn't need to be
+			// considered when dealing with block records since the
+			// key (and seek prefix) is just the block height.
+			if !bytes.HasPrefix(it.ck, it.seek) {
+				it.ck, it.cv = it.c.Prev()
+			}
 		}
 	} else {
 		it.ck, it.cv = it.c.Prev()

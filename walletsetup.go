@@ -20,7 +20,7 @@ import (
 	"github.com/roasbeef/btcwallet/waddrmgr"
 	"github.com/roasbeef/btcwallet/wallet"
 	"github.com/roasbeef/btcwallet/walletdb"
-	_ "github.com/roasbeef/btcwallet/walletdb/bdb"
+	_ "github.com/roasbeef/btcwallet/walletdb/ldb"
 )
 
 // networkDir returns the directory name of a network directory to hold wallet
@@ -219,7 +219,7 @@ func createSimulationWallet(cfg *config) error {
 	fmt.Println("Creating the wallet...")
 
 	// Create the wallet database backed by bolt db.
-	db, err := walletdb.Create("bdb", dbPath)
+	db, err := walletdb.Create("ldb-nc", dbPath)
 	if err != nil {
 		return err
 	}

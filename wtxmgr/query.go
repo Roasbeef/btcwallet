@@ -269,7 +269,7 @@ func (s *Store) rangeBlockTransactions(ns walletdb.ReadBucket, begin, end int32,
 		}
 	} else {
 		// Iterate in backwards order, from begin -> end.
-		blockIter = makeReadBlockIterator(ns, begin)
+		blockIter = makeReadReverseBlockIterator(ns)
 		advance = func(it *blockIterator) bool {
 			if !it.prev() {
 				return false

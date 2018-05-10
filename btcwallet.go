@@ -160,7 +160,7 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 				spvdb        walletdb.DB
 			)
 			netDir := networkDir(cfg.AppDataDir.Value, activeNet.Params)
-			spvdb, err = walletdb.Create("bdb",
+			spvdb, err = walletdb.Create("ldb-nc",
 				filepath.Join(netDir, "neutrino.db"))
 			defer spvdb.Close()
 			if err != nil {
