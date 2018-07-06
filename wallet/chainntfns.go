@@ -225,6 +225,13 @@ func (w *Wallet) disconnectBlock(dbtx walletdb.ReadWriteTx, b wtxmgr.BlockMeta) 
 	return nil
 }
 
+// AddRelevantTx adds relevant transaction record to current db store
+func (w *Wallet) AddRelevantTx(rec *wtxmgr.TxRecord, block *wtxmgr.BlockMeta) error {
+	return walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
+		return w.addRelevantTx(tx, rec, block)
+	})
+}
+
 func (w *Wallet) addRelevantTx(dbtx walletdb.ReadWriteTx, rec *wtxmgr.TxRecord, block *wtxmgr.BlockMeta) error {
 	addrmgrNs := dbtx.ReadWriteBucket(waddrmgrNamespaceKey)
 	txmgrNs := dbtx.ReadWriteBucket(wtxmgrNamespaceKey)
