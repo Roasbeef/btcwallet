@@ -497,6 +497,9 @@ func (w *Wallet) syncWithChain() error {
 						Hash:      *hash,
 						Timestamp: timestamp,
 					}
+
+					log.Infof("Detected wallet birthday "+
+						"as: %v", spew.Sdump(birthdayStamp))
 				}
 
 				// If we are in recovery mode and the check
