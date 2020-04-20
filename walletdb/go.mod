@@ -8,5 +8,6 @@ require (
 	github.com/davecgh/go-spew v1.1.1
 	go.etcd.io/bbolt v1.3.3 // indirect
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
-	golang.org/x/sys v0.0.0-20190904154756-749cb33beabd // indirect
 )
+
+replace go.etcd.io/bbolt v1.3.3 => github.com/jrick/bbolt v1.3.4-0.20200402153132-d6be1a74f54c
