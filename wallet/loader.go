@@ -75,6 +75,18 @@ func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
 	}
 }
 
+// NewLoaderWithDB...
+func NewLoaderWithDB(chainParams *chaincfg.Params, db walletdb.DB,
+	timeout time.Duration, recoveryWindow uint32) *Loader {
+
+	return &Loader{
+		chainParams:    chainParams,
+		db:             db,
+		timeout:        timeout,
+		recoveryWindow: recoveryWindow,
+	}
+}
+
 // onLoaded executes each added callback and prevents loader from loading any
 // additional wallets.  Requires mutex to be locked.
 func (l *Loader) onLoaded(w *Wallet, db walletdb.DB) {
@@ -143,25 +155,30 @@ func (l *Loader) createNewWallet(pubPassphrase, privPassphrase,
 		return nil, ErrExists
 	}
 
-	// Create the wallet database backed by bolt db.
-	err = os.MkdirAll(l.dbDirPath, 0700)
-	if err != nil {
-		return nil, err
-	}
-	db, err := walletdb.Create("bdb", dbPath, l.noFreelistSync, l.timeout)
-	if err != nil {
-		return nil, err
+	// Create the wallet database backed by bolt db, but only if we don't
+	// already have an instance of one.
+	if l.db == nil {
+		err = os.MkdirAll(l.dbDirPath, 0700)
+		if err != nil {
+			return nil, err
+		}
+		db, err := walletdb.Create("bdb", dbPath, l.noFreelistSync, l.timeout)
+		if err != nil {
+			return nil, err
+		}
+
+		l.db = db
 	}
 
 	// Initialize the newly created database for the wallet before opening.
 	if isWatchingOnly {
-		err = CreateWatchingOnly(db, pubPassphrase, l.chainParams, bday)
+		err = CreateWatchingOnly(l.db, pubPassphrase, l.chainParams, bday)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		err = Create(
-			db, pubPassphrase, privPassphrase, seed, l.chainParams, bday,
+			l.db, pubPassphrase, privPassphrase, seed, l.chainParams, bday,
 		)
 		if err != nil {
 			return nil, err
@@ -169,13 +186,13 @@ func (l *Loader) createNewWallet(pubPassphrase, privPassphrase,
 	}
 
 	// Open the newly-created wallet.
-	w, err := Open(db, pubPassphrase, nil, l.chainParams, l.recoveryWindow)
+	w, err := Open(l.db, pubPassphrase, nil, l.chainParams, l.recoveryWindow)
 	if err != nil {
 		return nil, err
 	}
 	w.Start()
 
-	l.onLoaded(w, db)
+	l.onLoaded(w, l.db)
 	return w, nil
 }
 
@@ -202,12 +219,17 @@ func (l *Loader) OpenExistingWallet(pubPassphrase []byte, canConsolePrompt bool)
 		return nil, err
 	}
 
-	// Open the database using the boltdb backend.
-	dbPath := filepath.Join(l.dbDirPath, WalletDBName)
-	db, err := walletdb.Open("bdb", dbPath, l.noFreelistSync, l.timeout)
-	if err != nil {
-		log.Errorf("Failed to open database: %v", err)
-		return nil, err
+	// Open the database using the boltdb backend (the default), but only
+	// if it wasn't already passed in.
+	if l.db == nil {
+		dbPath := filepath.Join(l.dbDirPath, WalletDBName)
+		db, err := walletdb.Open("bdb", dbPath, l.noFreelistSync, l.timeout)
+		if err != nil {
+			log.Errorf("Failed to open database: %v", err)
+			return nil, err
+		}
+
+		l.db = db
 	}
 
 	var cbs *waddrmgr.OpenCallbacks
@@ -222,12 +244,12 @@ func (l *Loader) OpenExistingWallet(pubPassphrase []byte, canConsolePrompt bool)
 			ObtainPrivatePass: noConsole,
 		}
 	}
-	w, err := Open(db, pubPassphrase, cbs, l.chainParams, l.recoveryWindow)
+	w, err := Open(l.db, pubPassphrase, cbs, l.chainParams, l.recoveryWindow)
 	if err != nil {
 		// If opening the wallet fails (e.g. because of wrong
 		// passphrase), we must close the backing database to
 		// allow future calls to walletdb.Open().
-		e := db.Close()
+		e := l.db.Close()
 		if e != nil {
 			log.Warnf("Error closing database: %v", e)
 		}
@@ -235,7 +257,7 @@ func (l *Loader) OpenExistingWallet(pubPassphrase []byte, canConsolePrompt bool)
 	}
 	w.Start()
 
-	l.onLoaded(w, db)
+	l.onLoaded(w, l.db)
 	return w, nil
 }
 
