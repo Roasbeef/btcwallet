@@ -1,5 +1,5 @@
-// Copyright (c) 2014-2016 The btcsuite developers
 // Use of this source code is governed by an ISC
+// Copyright (c) 2014-2016 The btcsuite developers
 // license that can be found in the LICENSE file.
 
 package waddrmgr
@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -3197,33 +3198,37 @@ func TestManagerScopedManagerDeadlock(t *testing.T) {
 	// Create a blockstamp for the import.
 	bs := &BlockStamp{
 		Height:    0,
-		Hash:      chaincfg.MainNetParams.GenesisHash,
+		Hash:      *chaincfg.MainNetParams.GenesisHash,
 		Timestamp: time.Unix(1231006505, 0),
 	}
 
-	// Create a channel to signal when the test is done.
-	done := make(chan struct{})
-	defer close(done)
+	// We'll use this channel to signal when the test is done (no deadlock).
+	done := make(chan struct{}, 2)
 
-	// Create a channel to signal when a deadlock is detected.
+	// We'll use this channel to signal when a deadlock is detected. The go
+	// runtime will also likely detect the deadlock.
 	deadlockCh := make(chan struct{})
 
-	// Create a channel to synchronize the goroutines.
+	// We'll use a ready channels synchronize operations with the two goroutines
+	// that are meant to trigger the deadlock.
 	readyCh := make(chan struct{})
 	var wg sync.WaitGroup
+
 	wg.Add(2)
 
-	// Start a goroutine that will call ImportScript, which acquires locks in
-	// the order: ScopedKeyManager -> Manager
+	// Start a goroutine that will call ImportScript, which acquires locks
+	// in the order: ScopedKeyManager -> Manager.
 	go func() {
 		defer wg.Done()
 
-		// Signal that this goroutine is ready
+		// Signal that this goroutine is ready.
 		readyCh <- struct{}{}
-		// Wait for the other goroutine to be ready
+
+		// Wait for the other goroutine to be ready.
 		<-readyCh
 
-		// This will acquire the ScopedKeyManager lock first, then the Manager lock
+		// This will acquire the ScopedKeyManager lock first, then the
+		// Manager lock.
 		err := walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
 			ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
 			_, err := scopedMgr.ImportScript(ns, script, bs)
@@ -3232,14 +3237,16 @@ func TestManagerScopedManagerDeadlock(t *testing.T) {
 		if err != nil {
 			t.Logf("ImportScript error: %v", err)
 		}
+
+		done <- struct{}{}
 	}()
 
 	// Start a goroutine that will call Address, which acquires locks in
-	// the order: Manager -> ScopedKeyManager
+	// the order: Manager -> ScopedKeyManager.
 	go func() {
 		defer wg.Done()
 
-		// First create an address we can look up
+		// First create an address we can look up.
 		err := walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
 			ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
 			_, err := scopedMgr.NextExternalAddresses(ns, 0, 1)
@@ -3250,12 +3257,14 @@ func TestManagerScopedManagerDeadlock(t *testing.T) {
 			return
 		}
 
-		// Signal that this goroutine is ready
-		readyCh <- struct{}{}
-		// Wait for the other goroutine to be ready
+		// Wait for the other goroutine to be ready.
 		<-readyCh
 
-		// This will acquire the Manager lock first, then the ScopedKeyManager lock
+		// Signal that this goroutine is ready.
+		readyCh <- struct{}{}
+
+		// This will acquire the Manager lock first, then the
+		// ScopedKeyManager lock.
 		err = walletdb.View(db, func(tx walletdb.ReadTx) error {
 			ns := tx.ReadBucket(waddrmgrNamespaceKey)
 			// Get the last external address
@@ -3263,47 +3272,62 @@ func TestManagerScopedManagerDeadlock(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			// This will trigger the Manager.Address method, which acquires locks
-			// in the order Manager -> ScopedKeyManager
+
+			// This will trigger the Manager.Address method, which
+			// acquires locks in the order Manager ->
+			// ScopedKeyManager.
 			_, err = mgr.Address(ns, addr.Address())
 			return err
 		})
 		if err != nil {
 			t.Logf("Address error: %v", err)
 		}
+
+		done <- struct{}{}
 	}()
 
-	// Start a goroutine to detect deadlock
+	// Start a goroutine to detect deadlock.
 	go func() {
-		// Wait for a reasonable amount of time for the operations to complete
+		// Wait for a reasonable amount of time for the operations to
+		// complete.
 		select {
 		case <-time.After(3 * time.Second):
-			// If we're still waiting after 3 seconds, it's likely a deadlock
+			// If we're still waiting after 3 seconds, it's likely
+			// a deadlock.
 			select {
 			case deadlockCh <- struct{}{}:
 			case <-done:
+				<-done
 			}
 		case <-done:
+			<-done
 		}
 	}()
 
-	// Wait for either a deadlock or completion
+	// Wait for either a deadlock or completion.
 	select {
 	case <-deadlockCh:
-		// If we get here, we've detected a potential deadlock
-		// Dump goroutines for debugging
-		buf := make([]byte, 1<<20)
-		stackLen := runtime.Stack(buf, true)
-		t.Logf("Deadlock detected! Goroutine stack:\n%s", buf[:stackLen])
-		
-		// Fail the test
-		t.Fatal("Deadlock detected between Manager and ScopedKeyManager")
+		fmt.Println("dead lock??")
+
+		// If we get here, we've detected a potential deadlock Dump
+		// goroutines for debugging.
+		// buf := make([]byte, 1<<20)
+		//panic("deadlock")
+
+		/*t.Logf("Deadlock detected! Goroutine stack:\n%s",
+		buf[:stackLen])*/
+
+		// Fail the test.
+		t.Fatal("Deadlock detected between Manager and " +
+			"ScopedKeyManager")
+
 	case <-time.After(4 * time.Second):
-		// If we get here without a deadlock signal, the test passes
-		t.Log("No deadlock detected, but this doesn't guarantee there isn't an issue")
+		// If we get here without a deadlock signal, the test passes.
+		t.Log("No deadlock detected, but this doesn't guarantee " +
+			"there isn't an issue")
 	}
 
-	// Clean up
+	// Clean up.
 	wg.Wait()
 }
 
